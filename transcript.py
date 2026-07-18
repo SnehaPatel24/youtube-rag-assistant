@@ -1,15 +1,37 @@
 from youtube_transcript_api import YouTubeTranscriptApi
-import streamlit as st
+from youtube_transcript_api._errors import TranscriptsDisabled
+from urllib.parse import urlparse, parse_qs
 
 
-def get_transcript(video_id):
+def extract_video_id(url):
+
+    if "youtu.be" in url:
+        return url.split("/")[-1]
+
+    parsed = urlparse(url)
+
+    if parsed.hostname in ["www.youtube.com", "youtube.com"]:
+        return parse_qs(parsed.query)["v"][0]
+
+    return url
+
+
+def get_transcript(url):
+
+    video_id = extract_video_id(url)
+
     try:
-        api = YouTubeTranscriptApi()
+        yt = YouTubeTranscriptApi()
 
-        transcript = api.fetch(video_id)
+        transcript = yt.fetch(video_id)
 
-        return " ".join(item.text for item in transcript)
+        text = " ".join(chunk.text for chunk in transcript)
+
+        return text
+
+    except TranscriptsDisabled:
+        return None
 
     except Exception as e:
-        st.exception(e)
-        raise
+        print(e)
+        return None
