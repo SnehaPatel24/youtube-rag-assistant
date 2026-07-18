@@ -52,9 +52,11 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🎥 YouTube RAG Assistant")
+st.title("🎥 YouTube Video Q&A Assistant")
 
-st.write("Ask questions about any YouTube video using Gemini + RAG.")
+st.write(
+    "Ask questions about any YouTube video using AI-powered Retrieval-Augmented Generation (RAG)."
+)
 
 # -----------------------------
 # Store Vector Store
