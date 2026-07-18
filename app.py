@@ -1,93 +1,107 @@
 import asyncio
-from urllib.parse import urlparse, parse_qs
+import streamlit as st
 
-
-def get_video_id(url):
-    """
-    Extract YouTube video ID from different URL formats.
-    """
-
-    parsed = urlparse(url)
-
-    # Short URL
-    if parsed.hostname == "youtu.be":
-        return parsed.path.lstrip("/")
-
-    # Standard YouTube URLs
-    if parsed.hostname in ("www.youtube.com", "youtube.com"):
-
-        # https://www.youtube.com/watch?v=xxxx
-        if parsed.path == "/watch":
-            return parse_qs(parsed.query).get("v", [None])[0]
-
-        # https://www.youtube.com/shorts/xxxx
-        elif parsed.path.startswith("/shorts/"):
-            return parsed.path.split("/")[2]
-
-        # https://www.youtube.com/embed/xxxx
-        elif parsed.path.startswith("/embed/"):
-            return parsed.path.split("/")[2]
-
-    return None
-
-
+# -------------------------------------------------
+# Fix asyncio event loop issue in Streamlit
+# -------------------------------------------------
 try:
     asyncio.get_event_loop()
 except RuntimeError:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-import streamlit as st
-
 from transcript import get_transcript
 from rag import (
     split_transcript,
     create_vector_store,
-    ask_question
+    ask_question,
 )
 
+# -------------------------------------------------
+# Page Configuration
+# -------------------------------------------------
 st.set_page_config(
-    page_title="YouTube RAG Assistant",
+    page_title="YouTube Video Q&A Assistant",
     page_icon="🎥",
-    layout="wide"
+    layout="centered",
 )
 
-st.title("🎥 YouTube Video Q&A Assistant")
+# -------------------------------------------------
+# Session State
+# -------------------------------------------------
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-st.write(
-    "Ask questions about any YouTube video using AI-powered Retrieval-Augmented Generation (RAG)."
-)
-
-# -----------------------------
-# Store Vector Store
-# -----------------------------
 if "vector_store" not in st.session_state:
     st.session_state.vector_store = None
 
+# -------------------------------------------------
+# Title
+# -------------------------------------------------
+st.title("🎥 YouTube Video Q&A Assistant")
 
-# -----------------------------
-# YouTube URL
-# -----------------------------
-youtube_url = st.text_input(
-    "Paste YouTube URL"
+st.caption(
+    "Ask questions about any YouTube video using **Google Gemini + Retrieval-Augmented Generation (RAG)**."
 )
 
+st.divider()
 
-# -----------------------------
-# Process Button
-# -----------------------------
-if st.button("Process Video"):
+# -------------------------------------------------
+# Sidebar
+# -------------------------------------------------
+with st.sidebar:
 
-    if youtube_url == "":
+    st.header("📌 About")
+
+    st.write("""
+This application can:
+
+- 📺 Extract YouTube transcripts
+- ✂️ Split transcripts into chunks
+- 🧠 Create embeddings
+- 📚 Store vectors using FAISS
+- 🤖 Answer questions using Gemini
+""")
+
+    st.divider()
+
+    if st.button("🗑 Clear Chat"):
+        st.session_state.messages = []
+        st.success("Chat cleared!")
+
+    st.divider()
+
+    st.success("Ready")
+
+# -------------------------------------------------
+# YouTube URL
+# -------------------------------------------------
+youtube_url = st.text_input(
+    "Paste YouTube URL",
+    placeholder="https://www.youtube.com/watch?v=..."
+)
+
+# -------------------------------------------------
+# Process Video
+# -------------------------------------------------
+if st.button("🚀 Process Video"):
+
+    if youtube_url.strip() == "":
         st.warning("Please enter a YouTube URL.")
 
     else:
 
         try:
 
-            video_id = get_video_id(youtube_url)
-            if video_id is None:
-                st.error("❌ Invalid YouTube URL")
+            # Handle both URL formats
+            if "youtu.be/" in youtube_url:
+                video_id = youtube_url.split("youtu.be/")[1].split("?")[0]
+
+            elif "v=" in youtube_url:
+                video_id = youtube_url.split("v=")[1].split("&")[0]
+
+            else:
+                st.error("Invalid YouTube URL.")
                 st.stop()
 
             with st.spinner("Fetching transcript..."):
@@ -95,56 +109,75 @@ if st.button("Process Video"):
                 transcript = get_transcript(video_id)
 
             if transcript is None:
-
                 st.error("Transcript not available.")
+                st.stop()
 
-            else:
+            with st.spinner("Creating knowledge base..."):
 
-                with st.spinner("Creating embeddings..."):
+                chunks = split_transcript(transcript)
 
-                    chunks = split_transcript(transcript)
+                vector_store = create_vector_store(chunks)
 
-                    vector_store = create_vector_store(chunks)
+            st.session_state.vector_store = vector_store
 
-                    st.session_state.vector_store = vector_store
+            # Start a fresh conversation for every new video
+            st.session_state.messages = []
 
-                st.success("Video processed successfully!")
+            st.success("✅ Video processed successfully!")
 
         except Exception as e:
-            import traceback
-            st.error(str(e))
-            st.code(traceback.format_exc())
+            st.exception(e)
 
-
+# -------------------------------------------------
+# Chat History
+# -------------------------------------------------
 st.divider()
 
-# -----------------------------
-# Question
-# -----------------------------
-question = st.text_input(
-    "Ask a question"
-)
+for message in st.session_state.messages:
 
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
-if st.button("Ask"):
+# -------------------------------------------------
+# Ask Question
+# -------------------------------------------------
+question = st.chat_input("Ask a question about this video...")
+
+if question:
 
     if st.session_state.vector_store is None:
 
-        st.warning("Please process a video first.")
-
-    elif question == "":
-
-        st.warning("Please enter a question.")
+        st.warning("Please process a YouTube video first.")
 
     else:
 
-        with st.spinner("Thinking..."):
+        # Show user message immediately
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": question
+            }
+        )
 
-            answer = ask_question(
-                st.session_state.vector_store,
-                question
-            )
+        with st.chat_message("user"):
+            st.markdown(question)
 
-        st.subheader("Answer")
+        with st.chat_message("assistant"):
 
-        st.write(answer)
+            with st.spinner("Thinking..."):
+
+                answer = ask_question(
+                    st.session_state.vector_store,
+                    question
+                )
+
+            st.markdown(answer)
+
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer
+            }
+        )
+
+        st.rerun()
